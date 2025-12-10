@@ -1,0 +1,7 @@
+{
+  "name": "Gemini Smart Browser",
+  "description": "A voice-activated generative browser interface.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
