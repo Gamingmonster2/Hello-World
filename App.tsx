@@ -7,7 +7,7 @@ import { Hero } from './components/Hero';
 import { InputArea } from './components/InputArea';
 import { LivePreview } from './components/LivePreview';
 import { CreationHistory, Creation } from './components/CreationHistory';
-import { bringToLife, refineCode, ImagePart } from './services/gemini';
+import { bringToLife, refineCode, AssetFile } from './services/gemini';
 
 const App: React.FC = () => {
   const [activeCreation, setActiveCreation] = useState<Creation | null>(null);
@@ -36,7 +36,7 @@ const App: React.FC = () => {
     }
   }, [history]);
 
-  const fileToBase64 = (file: File): Promise<{data: string, mimeType: string}> => {
+  const fileToBase64 = (file: File): Promise<AssetFile> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.readAsDataURL(file);
@@ -44,7 +44,11 @@ const App: React.FC = () => {
         if (typeof reader.result === 'string') {
           // extract base64 part
           const base64 = reader.result.split(',')[1];
-          resolve({ data: base64, mimeType: file.type.toLowerCase() });
+          resolve({ 
+              name: file.name,
+              mimeType: file.type || 'application/octet-stream',
+              data: base64 
+          });
         } else {
           reject(new Error('Failed to convert file'));
         }
@@ -57,8 +61,6 @@ const App: React.FC = () => {
     console.error("Full API Error Object:", error);
     
     // Attempt to extract the error message from various possible structures
-    // 1. Standard Error object: error.message
-    // 2. JSON Error response: error.error.message or error.error.code
     let msg = "";
     
     if (error?.error?.message) {
@@ -91,28 +93,34 @@ const App: React.FC = () => {
     }
   };
 
-  const handleGenerate = async (promptText: string, file: File | null) => {
+  const handleGenerate = async (promptText: string, files: File[]) => {
     setIsGenerating(true);
     setActiveCreation(null);
 
     try {
-      const imageParts: ImagePart[] = [];
-      let imageUrl: string | undefined = undefined;
+      const assets: AssetFile[] = [];
+      let previewImage: string | undefined = undefined;
 
-      if (file) {
-          const { data, mimeType } = await fileToBase64(file);
-          imageParts.push({ inlineData: { data, mimeType } });
-          imageUrl = `data:${mimeType};base64,${data}`;
+      // Convert all files to Base64 Asset Objects
+      if (files && files.length > 0) {
+          for (const file of files) {
+              const asset = await fileToBase64(file);
+              assets.push(asset);
+              // Use the first image found as the preview thumbnail
+              if (!previewImage && asset.mimeType.startsWith('image/')) {
+                  previewImage = `data:${asset.mimeType};base64,${asset.data}`;
+              }
+          }
       }
 
-      const html = await bringToLife(promptText, imageParts);
+      const html = await bringToLife(promptText, assets);
       
       if (html) {
         const newCreation: Creation = {
           id: crypto.randomUUID(),
-          name: promptText.slice(0, 30) || (file ? `Image Analysis` : 'Voice Search Result'),
+          name: promptText.slice(0, 30) || (files.length > 0 ? `${files.length} Assets Uploaded` : 'Voice Search Result'),
           html: html,
-          originalImage: imageUrl,
+          originalImage: previewImage,
           timestamp: new Date(),
         };
         setActiveCreation(newCreation);
@@ -126,12 +134,21 @@ const App: React.FC = () => {
     }
   };
 
-  const handleRefine = async (refinementPrompt: string) => {
+  const handleRefine = async (refinementPrompt: string, files: File[]) => {
     if (!activeCreation) return;
 
     setIsGenerating(true);
     try {
-        const updatedHtml = await refineCode(activeCreation.html, refinementPrompt);
+        const assets: AssetFile[] = [];
+        // Convert refinement files to Base64
+        if (files && files.length > 0) {
+            for (const file of files) {
+                const asset = await fileToBase64(file);
+                assets.push(asset);
+            }
+        }
+
+        const updatedHtml = await refineCode(activeCreation.html, refinementPrompt, assets);
         
         const refinedCreation: Creation = {
             ...activeCreation,
@@ -179,7 +196,7 @@ const App: React.FC = () => {
           >
              <span className="text-xs font-mono text-zinc-400 group-hover:text-white">Publish to GitHub</span>
              <svg viewBox="0 0 24 24" className="w-4 h-4 text-zinc-500 group-hover:text-white transition-colors" fill="currentColor">
-                 <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+                 <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-1.333-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
              </svg>
           </a>
       </div>

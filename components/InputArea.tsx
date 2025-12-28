@@ -3,10 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
 */
 import React, { useState, useEffect, useRef } from 'react';
-import { MicrophoneIcon, MagnifyingGlassIcon, PaperClipIcon, XMarkIcon } from '@heroicons/react/24/solid';
+import { MicrophoneIcon, MagnifyingGlassIcon, PaperClipIcon, XMarkIcon, FolderOpenIcon, MusicalNoteIcon, PhotoIcon } from '@heroicons/react/24/solid';
 
 interface InputAreaProps {
-  onGenerate: (prompt: string, file: File | null) => void;
+  onGenerate: (prompt: string, files: File[]) => void;
   isGenerating: boolean;
   disabled?: boolean;
 }
@@ -24,7 +24,7 @@ const VoiceVisualizer = () => (
 export const InputArea: React.FC<InputAreaProps> = ({ onGenerate, isGenerating, disabled = false }) => {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState("");
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [assetFiles, setAssetFiles] = useState<File[]>([]);
   const recognitionRef = useRef<any>(null);
 
   // Initialize Speech Recognition
@@ -65,33 +65,36 @@ export const InputArea: React.FC<InputAreaProps> = ({ onGenerate, isGenerating, 
 
   const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (transcript.trim() || selectedFile) {
-        onGenerate(transcript, selectedFile);
+    if (transcript.trim() || assetFiles.length > 0) {
+        onGenerate(transcript, assetFiles);
         setTranscript("");
-        setSelectedFile(null);
+        setAssetFiles([]);
     }
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleAssetUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-        setSelectedFile(e.target.files[0]);
+        // Append new files to existing ones
+        setAssetFiles(prev => [...prev, ...Array.from(e.target.files || [])]);
     }
-    e.target.value = '';
+    e.target.value = ''; // Reset input
+  };
+
+  const removeAsset = (index: number) => {
+      setAssetFiles(prev => prev.filter((_, i) => i !== index));
   };
 
   // Effect to auto-submit when speech ends
   useEffect(() => {
       if (!isListening && transcript && !isGenerating) {
-          // If a file is selected, we usually want the user to confirm, but for voice fluidity we can auto-send
-          // or wait. Let's wait a bit to see if they keep talking, then send.
           const timeout = setTimeout(() => {
-             onGenerate(transcript, selectedFile);
+             onGenerate(transcript, assetFiles);
              setTranscript("");
-             setSelectedFile(null);
+             setAssetFiles([]);
           }, 800);
           return () => clearTimeout(timeout);
       }
-  }, [isListening, transcript, isGenerating, onGenerate, selectedFile]);
+  }, [isListening, transcript, isGenerating, onGenerate, assetFiles]);
 
   return (
     <div className="w-full max-w-2xl mx-auto relative z-20">
@@ -136,8 +139,8 @@ export const InputArea: React.FC<InputAreaProps> = ({ onGenerate, isGenerating, 
             </button>
 
             {/* Transcript / Search Bar Display */}
-            <div className="w-full relative">
-                <form onSubmit={handleManualSubmit} className="relative group">
+            <div className="w-full relative flex flex-col space-y-4">
+                <form onSubmit={handleManualSubmit} className="relative group w-full">
                     <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none">
                         <MagnifyingGlassIcon className="w-5 h-5 text-zinc-500" />
                     </div>
@@ -146,7 +149,7 @@ export const InputArea: React.FC<InputAreaProps> = ({ onGenerate, isGenerating, 
                         type="text"
                         value={transcript}
                         onChange={(e) => setTranscript(e.target.value)}
-                        placeholder={isListening ? "Listening..." : "Say something or type URL..."}
+                        placeholder={isListening ? "Listening..." : "Describe the app or game you want..."}
                         className={`
                             w-full bg-zinc-900/80 backdrop-blur-xl border border-zinc-800 
                             text-white placeholder-zinc-500 rounded-full py-4 pl-12 pr-14
@@ -156,40 +159,64 @@ export const InputArea: React.FC<InputAreaProps> = ({ onGenerate, isGenerating, 
                         `}
                     />
 
-                    {/* File Upload Attachment Icon */}
+                    {/* Quick Attachment Icon (Primary) */}
                     <div className="absolute inset-y-0 right-3 flex items-center">
-                        <label className="p-2 rounded-full hover:bg-zinc-800 cursor-pointer transition-colors relative">
-                            <input 
-                                type="file" 
-                                className="hidden" 
-                                accept="image/*"
-                                onChange={handleFileChange}
-                                disabled={isGenerating}
-                            />
-                            {selectedFile ? (
-                                <div className="relative">
-                                    <PaperClipIcon className="w-5 h-5 text-blue-400" />
-                                    <div className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-blue-500 rounded-full border border-zinc-900"></div>
-                                </div>
-                            ) : (
-                                <PaperClipIcon className="w-5 h-5 text-zinc-500" />
-                            )}
-                        </label>
+                         <button 
+                            type="submit" 
+                            disabled={!transcript.trim() && assetFiles.length === 0}
+                            className="p-2 bg-blue-600 hover:bg-blue-500 text-white rounded-full transition-colors disabled:opacity-0 disabled:pointer-events-none"
+                         >
+                            <MagnifyingGlassIcon className="w-4 h-4" />
+                         </button>
                     </div>
                 </form>
 
-                {/* Selected File Indicator (if manual typing) */}
-                {selectedFile && (
-                    <div className="absolute top-full left-0 mt-2 flex items-center space-x-2 bg-zinc-800/50 px-3 py-1 rounded-lg border border-zinc-700">
-                        <span className="text-xs text-zinc-300 truncate max-w-[200px]">{selectedFile.name}</span>
-                        <button 
-                            onClick={() => setSelectedFile(null)}
-                            className="text-zinc-500 hover:text-white"
-                        >
-                            <XMarkIcon className="w-3 h-3" />
-                        </button>
+                {/* --- NEW ASSET UPLOAD SECTION --- */}
+                <div className="w-full flex flex-col space-y-2">
+                    <div className="flex items-center space-x-2">
+                        <label className="flex items-center space-x-2 cursor-pointer bg-zinc-800/50 hover:bg-zinc-800 border border-zinc-700/50 hover:border-zinc-600 transition-colors px-4 py-2 rounded-lg group">
+                            <input 
+                                type="file" 
+                                className="hidden" 
+                                accept="image/*,audio/*"
+                                multiple
+                                onChange={handleAssetUpload}
+                                disabled={isGenerating}
+                            />
+                            <FolderOpenIcon className="w-4 h-4 text-zinc-400 group-hover:text-blue-400" />
+                            <span className="text-xs font-medium text-zinc-400 group-hover:text-zinc-200">
+                                Upload Assets (Img/Audio)
+                            </span>
+                        </label>
+                        <span className="text-[10px] text-zinc-600">Select files to add to the prompt</span>
                     </div>
-                )}
+
+                    {/* Asset List with Virtual Paths */}
+                    {assetFiles.length > 0 && (
+                        <div className="grid grid-cols-1 gap-2 bg-zinc-900/50 rounded-lg p-2 border border-zinc-800/50">
+                            {assetFiles.map((file, idx) => (
+                                <div key={idx} className="flex items-center justify-between bg-zinc-800 px-3 py-2 rounded border border-zinc-700">
+                                    <div className="flex items-center space-x-3 overflow-hidden">
+                                        {file.type.startsWith('audio') ? (
+                                            <MusicalNoteIcon className="w-4 h-4 text-purple-400 shrink-0" />
+                                        ) : (
+                                            <PhotoIcon className="w-4 h-4 text-green-400 shrink-0" />
+                                        )}
+                                        <div className="flex flex-col min-w-0">
+                                            <span className="text-xs text-zinc-300 truncate">{file.name}</span>
+                                            <span className="text-[10px] font-mono text-blue-400/80 truncate">
+                                                /assets/uploads/{file.name.replace(/\s+/g, '_')}
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <button onClick={() => removeAsset(idx)} className="text-zinc-500 hover:text-red-400 ml-2">
+                                        <XMarkIcon className="w-4 h-4" />
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
 
                 {/* Processing State Indicator */}
                 {isGenerating && (

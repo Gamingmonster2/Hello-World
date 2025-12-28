@@ -20,19 +20,19 @@ CORE DIRECTIVES:
     - Use a clean, "Google Material" or modern aesthetic.
     - Responsive design is mandatory.
 
-3. **NO EXTERNAL RESOURCES**:
-    - Do NOT use external images (<img> src). Use CSS, SVGs, or Emojis.
-    - You may use Tailwind CSS (via CDN).
+3. **ASSET HANDLING**:
+    - If the user provides assets (Images/Audio), you MUST embed them directly into the HTML code.
+    - Use Data URIs (base64) for 'src' attributes.
+    - DO NOT create broken links to local files like './assets/'. Use the provided BASE64 data.
 
 4. **Self-Contained**:
     - Return ONLY the raw HTML code. Start immediately with <!DOCTYPE html>.
 `;
 
-export interface ImagePart {
-  inlineData: {
-    data: string;
-    mimeType: string;
-  };
+export interface AssetFile {
+  name: string;
+  mimeType: string;
+  data: string; // Base64 string
 }
 
 /**
@@ -48,7 +48,6 @@ async function generateWithRetry<T>(
     return await operation();
   } catch (error: any) {
     // Inspect error for 429 (Too Many Requests) or 503 (Service Unavailable)
-    // The error object structure can vary, so we check multiple paths
     const status = error?.status || error?.response?.status || error?.error?.code;
     const message = (error?.message || JSON.stringify(error)).toLowerCase();
     
@@ -69,22 +68,36 @@ async function generateWithRetry<T>(
   }
 }
 
-export async function bringToLife(prompt: string, images: ImagePart[] = []): Promise<string> {
-  // Initialize client per-request to ensure best practices and error handling context
+export async function bringToLife(prompt: string, assets: AssetFile[] = []): Promise<string> {
+  // Initialize client per-request
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   
   const parts: any[] = [];
   
-  const finalPrompt = images.length > 0
-    ? `Context: User uploaded an image. Voice Command: "${prompt || "Analyze this image and build a web interface based on it."}". Generate a web interface response.` 
-    : `Voice Command: "${prompt}". Generate the web interface for this request.`;
+  // Construct the prompt with explicit asset mapping instructions
+  let constructedPrompt = `Voice Command: "${prompt || "Build a web interface based on these assets."}".`;
 
-  parts.push({ text: finalPrompt });
+  if (assets.length > 0) {
+      constructedPrompt += `\n\n[ATTACHED ASSETS DETECTED]\n`;
+      constructedPrompt += `The user has uploaded the following files. You must use them in the generated code.\n`;
+      constructedPrompt += `IMPORTANT: To make them work, you must use the BASE64 data provided below as the 'src'.\n`;
+      
+      assets.forEach((asset, index) => {
+          // Clean filename for variable usage
+          const virtualPath = `/assets/uploads/${asset.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+          
+          constructedPrompt += `\n--- ASSET ${index + 1} ---\n`;
+          constructedPrompt += `Filename: ${asset.name}\n`;
+          constructedPrompt += `Virtual Path: ${virtualPath}\n`;
+          constructedPrompt += `MIME: ${asset.mimeType}\n`;
+          constructedPrompt += `DATA (Base64): data:${asset.mimeType};base64,${asset.data}\n`;
+          constructedPrompt += `INSTRUCTION: Wherever the code would logically use "${virtualPath}" (or if the user asked for this file), insert the DATA string above.\n`;
+      });
+  }
 
-  // Add all images to the request
-  images.forEach(img => {
-    parts.push(img);
-  });
+  constructedPrompt += `\nGenerate the fully functional HTML application now.`;
+
+  parts.push({ text: constructedPrompt });
 
   try {
     const response: GenerateContentResponse = await generateWithRetry(() => 
@@ -110,8 +123,23 @@ export async function bringToLife(prompt: string, images: ImagePart[] = []): Pro
   }
 }
 
-export async function refineCode(currentHtml: string, refinementPrompt: string): Promise<string> {
+export async function refineCode(currentHtml: string, refinementPrompt: string, newAssets: AssetFile[] = []): Promise<string> {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+
+  let assetContext = "";
+  if (newAssets.length > 0) {
+      assetContext += `\n\n[NEW ASSETS PROVIDED]\n`;
+      assetContext += `The user has uploaded new files to be added to the project:\n`;
+      newAssets.forEach((asset, index) => {
+          const virtualPath = `/assets/uploads/${asset.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+          assetContext += `\n--- NEW ASSET ${index + 1} ---\n`;
+          assetContext += `Filename: ${asset.name}\n`;
+          assetContext += `Virtual Path: ${virtualPath}\n`;
+          assetContext += `MIME: ${asset.mimeType}\n`;
+          assetContext += `DATA (Base64): data:${asset.mimeType};base64,${asset.data}\n`;
+          assetContext += `INSTRUCTION: Integrate this new asset into the code. Use the Base64 data for 'src' attributes.\n`;
+      });
+  }
 
   const prompt = `
     CURRENT CODE:
@@ -120,11 +148,14 @@ export async function refineCode(currentHtml: string, refinementPrompt: string):
     USER REQUEST FOR IMPROVEMENT:
     "${refinementPrompt}"
 
+    ${assetContext}
+
     INSTRUCTIONS:
     1. Update the CURRENT CODE to match the USER REQUEST.
     2. Maintain the same visual style and structure unless asked to change.
-    3. Return the FULL updated HTML file (do not return just snippets).
-    4. Ensure the code remains self-contained (no external images except Tailwind CDN).
+    3. If new assets are provided, ensure they are implemented correctly using the Data URIs.
+    4. Return the FULL updated HTML file (do not return just snippets).
+    5. Ensure the code remains self-contained.
   `;
 
   try {
